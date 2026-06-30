@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDI to DMX & Visualizer Linker</title>
+    <style>
+        :root {
+            --bg-color: #1e1e24;
+            --panel-bg: #2a2a35;
+            --accent-color: #00adb5;
+            --text-color: #eeeeee;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1, h2 { color: var(--accent-color); }
+        .panel {
+            background: var(--panel-bg);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        button {
+            background-color: var(--accent-color);
+            color: #fff;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #007a80; }
+        button:disabled { background-color: #555; cursor: not-allowed; }
+        .status { font-weight: bold; margin-left: 10px; }
+        .status.connected { color: #00ff88; }
+        .status.disconnected { color: #ff4444; }
+        label { display: block; margin-top: 10px; font-size: 0.9em; }
+        input, select {
+            width: 100%;
+            padding: 8px;
+            margin-top: 5px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #111;
+            color: #fff;
+            box-sizing: border-box;
+        }
+        #log {
+            background: #111;
+            font-family: monospace;
+            padding: 10px;
+            height: 150px;
+            overflow-y: auto;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>MIDI Device & Signal Controller</h1>
+
+    <div class="panel grid">
+        <div>
+            <h2>Hardware Connection</h2>
+            <p>MIDI Status: <span id="midi-status" class="status disconnected">Disconnected</span></p>
+            <button id="btn-serial">Connect DMX (Serial)</button>
+            <p>DMX Status: <span id="dmx-status" class="status disconnected">Disconnected</span></p>
+        </div>
+        <div>
+            <h2>Visualization Window</h2>
+            <p>別ウィンドウを生成して描画を開始します。</p>
+            <button id="btn-window">Open Visualizer Window</button>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Global Visualization Settings</h2>
+        <div class="grid">
+            <div>
+                <label>Default Shape</label>
+                <select id="cfg-shape">
+                    <option value="circle">Circle (円)</option>
+                    <option value="rect">Rectangle (四角)</option>
+                    <option value="triangle">Triangle (三角)</option>
+                </select>
+                <label>Default Size (Base Radius/Width)</label>
+                <input type="number" id="cfg-size" value="100" min="10" max="500">
+            </div>
+            <div>
+                <label>Base Color (HEX)</label>
+                <input type="color" id="cfg-color" value="#00adb5">
+                <label>Max Velocity Scale (拡大率 multiplier)</label>
+                <input type="number" id="cfg-scale" value="2.5" step="0.1" min="1" max="10">
+            </div>
+            <div>
+                <label>Animation Decay Rate (消え方の速さ)</label>
+                <input type="number" id="cfg-decay" value="0.92" step="0.01" min="0.8" max="0.99">
+                <label>DMX Output Channel (for CC)</label>
+                <input type="number" id="cfg-dmx-ch" value="1" min="1" max="512">
+            </div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Console Log</h2>
+        <div id="log">Application initialized. Awaiting hardware interaction...</div>
+    </div>
+</div>
+
+<script>
+/**
+ * ---------------------------------------------------------------------------
+ * 信号処理 & デバイスコントロール コアロジック
+ * ---------------------------------------------------------------------------
+ */
+
+// グローバルステート
+let midiAccess = null;
+let serialPort = null;
+let serialWriter = null;
+let visualWindow = null;
+
+// DMXフレームバッファ (1スタートコード + 512チャンネル = 513バイト)
+const dmxBuffer = new Uint8Array(513); 
+
+// DOM要素
+const logEl = document.getElementById('log');
+const midiStatusEl = document.getElementById('midi-status');
+const dmxStatusEl = document.getElementById('dmx-status');
+const btnSerial = document.getElementById('btn-serial');
+const btnWindow = document.getElementById('btn-window');
+
+function logger(msg) {
+    const time = new Date().toLocaleTimeString();
+    logEl.innerHTML += `<div>[${time}] ${msg}</div>`;
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+/**
+ * 1. Web MIDI API 実装
+ */
+async function initMIDI() {
+    if (!navigator.requestMIDIAccess) {
+        logger("Error: Web MIDI API not supported in this browser.");
+        return;
+    }
+    try {
+        midiAccess = await navigator.requestMIDIAccess();
+        midiStatusEl.textContent = "Ready";
+        midiStatusEl.className = "status connected";
+        
+        for (let input of midiAccess.inputs.values()) {
+            input.onmidimessage = handleMIDIMessage;
+            logger(`MIDI Input Connected: ${input.name}`);
+        }
+        
+        midiAccess.onstatechange = (e) => {
+            logger(`MIDI State Change: ${e.port.name} is ${e.port.state}`);
+        };
+    } catch (err) {
+        logger(`MIDI Initialization Failed: ${err}`);
+    }
+}
+
+function handleMIDIMessage(event) {
+    const [status, data1, data2] = event.data;
+    const type = status & 0xf0;
+    const channel = status & 0x0f; // 0-15
+
+    // Note ON
+    if (type === 0x90 && data2 > 0) {
+        const note = data1;
+        const velocity = data2;
+        logger(`Note ON - Note: ${note}, Velocity: ${velocity}`);
+        triggerVisualization(note, velocity);
+    }
+    // Control Change (CC)
+    else if (type === 0xb0) {
+        const ccNumber = data1;
+        const ccValue = data2;
+        logger(`CC Change - Control: ${ccNumber}, Value: ${ccValue}`);
+        processCCtoDMX(ccNumber, ccValue);
+    }
+}
+
+/**
+ * 2. Web Serial API によるDMX512送信実装
+ * ※一般的なUSB-DMX（FTDI等）やシリアル転送を想定
+ */
+btnSerial.addEventListener('click', async () => {
+    if (!navigator.serial) {
+        logger("Error: Web Serial API not supported. Use Chrome/Edge over HTTPS.");
+        return;
+    }
+    try {
+        serialPort = await navigator.serial.requestPort();
+        // DMX512規格の通信レート: 250kbps, データビット8, ストップビット2
+        await serialPort.open({ baudRate: 250000, dataBits: 8, stopBits: 2, parity: "none" });
+        serialWriter = serialPort.writable.getWriter();
+        
+        dmxStatusEl.textContent = "Connected";
+        dmxStatusEl.className = "status connected";
+        logger("DMX Serial Port Connected successfully.");
+        
+        // 継続的なDMXフレーム送信ループの開始（リフレッシュレート約40Hzを維持）
+        startDmxLoop();
+    } catch (err) {
+        logger(`Serial Connection Failed: ${err}`);
+    }
+});
+
+function processCCtoDMX(ccNumber, ccValue) {
+    const targetChannel = parseInt(document.getElementById('cfg-dmx-ch').value, 10);
+    
+    // CC値 (0-127) を DMX値 (0-255) にビットシフト（マッピング処理）
+    const dmxValue = Math.min(255, Math.max(0, ccValue << 1));
+    
+    // バッファ配列のインデックス（0番目はスタートコード固定、1番目がDMX Ch.1）
+    if (targetChannel >= 1 && targetChannel <= 512) {
+        dmxBuffer[targetChannel] = dmxValue;
+    }
+}
+
+async function startDmxLoop() {
+    while (serialWriter) {
+        try {
+            // DMXプロトコルにおける「ブレーク信号」のシミュレート
+            // Web Serial仕様に基づき、ポート側の信号ラインを一時的に制御してフレームの先頭を明示
+            await serialPort.setSignals({ break: true });
+            await new Promise(resolve => setTimeout(resolve, 1)); // Break Time (~88us以上)
+            await serialPort.setSignals({ break: false });
+            await new Promise(resolve => setTimeout(resolve, 1)); // Mark After Break
+
+            // スタートコード(0x00) + 512ch データを一括フラッシュ
+            await serialWriter.write(dmxBuffer);
+            
+            // DMXのフレーム間インターバル（約25ms ≒ 40fps）
+            await new Promise(resolve => setTimeout(resolve, 25)); 
+        } catch (err) {
+            logger(`DMX Loop Error: ${err}`);
+            break;
+        }
+    }
+}
+
+/**
+ * 3. 別ウィンドウによるヴィジュアライゼーション管理
+ */
+btnWindow.addEventListener('click', () => {
+    // すでに開いている場合はフォーカス
+    if (visualWindow && !visualWindow.closed) {
+        visualWindow.focus();
+        return;
+    }
+
+    // 別ウィンドウの展開
+    visualWindow = window.open("", "VisualizerWindow", "width=1000,height=700,menubar=no,toolbar=no,location=no,status=no");
+    
+    if (!visualWindow) {
+        logger("Error: Popup blocked! Please allow popups for this site.");
+        return;
+    }
+
+    // 子ウィンドウ用HTMLドキュメントのインジェクション
+    visualWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Render Canvas (Visualizer)</title>
+            <style>
+                body, html { margin: 0; padding: 0; overflow: hidden; background: #000; width: 100%; height: 100%; }
+                canvas { display: block; width: 100vw; height: 100vh; }
+            </style>
+        </head>
+        <body>
+            <canvas id="stage"></canvas>
+            <script>
+                const canvas = document.getElementById('stage');
+                const ctx = canvas.getContext('2d');
+                let activeShapes = [];
+
+                function resize() {
+                    canvas.width = window.innerWidth;
+                    canvas.height = window.innerHeight;
+                }
+                window.onresize = resize;
+                resize();
+
+                // 親ウィンドウからの描画命令リスナー
+                window.addEventListener('message', (e) => {
+                    if (e.data.type === 'NOTE_ON') {
+                        activeShapes.push({
+                            shape: e.data.shape,
+                            x: Math.random() * canvas.width,
+                            y: Math.random() * canvas.height,
+                            baseSize: e.data.size,
+                            scale: e.data.maxScale, // トリガー時に最大値へ
+                            color: e.data.color,
+                            decay: e.data.decay,
+                            alpha: 1.0
+                        });
+                    }
+                });
+
+                // メイン描画ループ (毎フレーム更新)
+                function render() {
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)'; // 残像効果のためのトレイル処理
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    for (let i = activeShapes.length - 1; i >= 0; i--) {
+                        let p = activeShapes[i];
+                        
+                        // イージング/ディケイ（指数関数的減衰によるキレの良いビート同期）
+                        p.scale = 1 + (p.scale - 1) * p.decay;
+                        p.alpha *= p.decay; // 透明度も同時に減衰
+
+                        ctx.save();
+                        ctx.globalAlpha = p.alpha;
+                        ctx.fillStyle = p.color;
+                        ctx.strokeStyle = p.color;
+                        ctx.lineWidth = 4;
+
+                        let currentSize = p.baseSize * p.scale;
+
+                        ctx.beginPath();
+                        if (p.shape === 'circle') {
+                            ctx.arc(p.x, p.y, currentSize / 2, 0, Math.PI * 2);
+                            ctx.fill();
+                        } else if (p.shape === 'rect') {
+                            ctx.fillRect(p.x - currentSize/2, p.y - currentSize/2, currentSize, currentSize);
+                        } else if (p.shape === 'triangle') {
+                            ctx.moveTo(p.x, p.y - currentSize/2);
+                            ctx.lineTo(p.x + currentSize/2, p.y + currentSize/2);
+                            ctx.lineTo(p.x - currentSize/2, p.y + currentSize/2);
+                            ctx.closePath();
+                            ctx.fill();
+                        }
+                        ctx.restore();
+
+                        // 完全に縮退、または不可視化したら配列から破棄
+                        if (p.scale <= 1.01 || p.alpha < 0.01) {
+                            activeShapes.splice(i, 1);
+                        }
+                    }
+                    requestAnimationFrame(render);
+                }
+                requestAnimationFrame(render);
+            <\/script>
+        </body>
+        </html>
+    `);
+    visualWindow.document.close();
+    logger("Visualizer Window opened and initialized.");
+});
+
+function triggerVisualization(note, velocity) {
+    if (!visualWindow || visualWindow.closed) return;
+
+    // GUI設定値のサンプリング
+    const shape = document.getElementById('cfg-shape').value;
+    const baseSize = parseFloat(document.getElementById('cfg-size').value);
+    const color = document.getElementById('cfg-color').value;
+    const maxScaleConfig = parseFloat(document.getElementById('cfg-scale').value);
+    const decay = parseFloat(document.getElementById('cfg-decay').value);
+
+    // Velocity (0-127) を正規化 (0.0 - 1.0) して拡大率へマッピング
+    const velocityRatio = velocity / 127;
+    // ベロシティが大きいほど、設定された最大拡大率に近づく
+    const targetScale = 1 + (maxScaleConfig - 1) * velocityRatio;
+
+    // クロスドメイン制限を回避しつつ、高速オブジェクトパッシングを実行
+    visualWindow.postMessage({
+        type: 'NOTE_ON',
+        note: note,
+        shape: shape,
+        size: baseSize,
+        maxScale: targetScale,
+        color: color,
+        decay: decay
+    }, '*');
+}
+
+// 初期化実行
+window.addEventListener('DOMContentLoaded', () => {
+    initMIDI();
+});
+</script>
+</body>
+</html>
