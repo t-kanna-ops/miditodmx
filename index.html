@@ -1,407 +1,579 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MIDI to DMX & Visualizer Linker</title>
-    <style>
-        :root {
-            --bg-color: #1e1e24;
-            --panel-bg: #2a2a35;
-            --accent-color: #00adb5;
-            --text-color: #eeeeee;
-        }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            margin: 0;
-            padding: 20px;
-        }
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-        }
-        h1, h2 { color: var(--accent-color); }
-        .panel {
-            background: var(--panel-bg);
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        }
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-        }
-        button {
-            background-color: var(--accent-color);
-            color: #fff;
-            border: none;
-            padding: 10px 15px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: bold;
-            transition: background 0.2s;
-        }
-        button:hover { background-color: #007a80; }
-        button:disabled { background-color: #555; cursor: not-allowed; }
-        .status { font-weight: bold; margin-left: 10px; }
-        .status.connected { color: #00ff88; }
-        .status.disconnected { color: #ff4444; }
-        label { display: block; margin-top: 10px; font-size: 0.9em; }
-        input, select {
-            width: 100%;
-            padding: 8px;
-            margin-top: 5px;
-            border-radius: 4px;
-            border: 1px solid #444;
-            background: #111;
-            color: #fff;
-            box-sizing: border-box;
-        }
-        #log {
-            background: #111;
-            font-family: monospace;
-            padding: 10px;
-            height: 150px;
-            overflow-y: auto;
-            border-radius: 4px;
-            font-size: 0.85em;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Media Art Audio/MIDI Routing & Visualization</title>
+<style>
+  :root {
+    --bg-main: #121212;
+    --bg-panel: #1e1e1e;
+    --bg-item: #2a2a2a;
+    --text-main: #e0e0e0;
+    --text-dim: #999;
+    --accent: #00ffcc;
+    --accent-hover: #00ccaa;
+    --border: #333;
+    --danger: #ff4444;
+    --success: #00cc44;
+  }
+  
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+  body { background-color: var(--bg-main); color: var(--text-main); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  
+  header { padding: 10px 20px; background: #000; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  h1 { font-size: 1.2rem; font-weight: 600; color: var(--accent); letter-spacing: 1px; }
+  
+  .main-container { display: flex; flex: 1; overflow: hidden; }
+  .panel { flex: 1; display: flex; flex-direction: column; background: var(--bg-panel); border-right: 1px solid var(--border); overflow-y: auto; padding: 15px; }
+  .panel:last-child { border-right: none; }
+  .panel-header { font-size: 1.1rem; margin-bottom: 15px; padding-bottom: 5px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  
+  button { background: var(--bg-item); color: var(--text-main); border: 1px solid var(--border); padding: 5px 10px; cursor: pointer; transition: 0.2s; font-size: 0.85rem; border-radius: 3px; }
+  button:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+  button.danger:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+  button.action { background: var(--border); }
+  button.action:hover { background: var(--success); color: #fff; border-color: var(--success); }
+  
+  input[type="text"], input[type="number"], select { background: #000; color: var(--text-main); border: 1px solid var(--border); padding: 5px; font-size: 0.85rem; border-radius: 3px; width: 100%; }
+  input[type="range"] { width: 100%; cursor: pointer; accent-color: var(--accent); }
+  
+  .card { background: var(--bg-item); border: 1px solid var(--border); padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+  .form-group { margin-bottom: 10px; }
+  .form-group label { display: block; font-size: 0.75rem; color: var(--text-dim); margin-bottom: 3px; }
+  .row { display: flex; gap: 10px; align-items: flex-end; }
+  .row > * { flex: 1; }
+  
+  .mapping-active { border-left: 3px solid var(--accent) !important; padding-left: 7px; }
+  .sub-slider { margin-left: 15px; margin-top: 5px; padding-left: 10px; border-left: 1px solid var(--border); }
+  
+  .indicator { height: 4px; background: #000; border-radius: 2px; overflow: hidden; margin-top: 5px; }
+  .indicator-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.05s linear; }
+
+  #context-menu { display: none; position: absolute; background: var(--bg-panel); border: 1px solid var(--accent); z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.5); border-radius: 4px; padding: 5px; min-width: 150px; }
+  #context-menu div { padding: 8px 12px; font-size: 0.85rem; cursor: pointer; }
+  #context-menu div:hover { background: var(--bg-item); color: var(--accent); }
+
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); margin-right: 5px; }
+  .status-dot.active { background: var(--success); }
+</style>
 </head>
 <body>
 
-<div class="container">
-    <h1>MIDI Device & Signal Controller</h1>
+<header>
+  <h1>MEDIA ART ROUTER & VISUALIZER</h1>
+  <div>
+    <button id="btn-scan-devices" class="action">Scan Devices (Request Permissions)</button>
+  </div>
+</header>
 
-    <div class="panel grid">
-        <div>
-            <h2>Hardware Connection</h2>
-            <p>MIDI Status: <span id="midi-status" class="status disconnected">Disconnected</span></p>
-            <button id="btn-serial">Connect DMX (Serial)</button>
-            <p>DMX Status: <span id="dmx-status" class="status disconnected">Disconnected</span></p>
+<div class="main-container">
+  <div class="panel">
+    <div class="panel-header">System & Devices</div>
+    
+    <div class="card" style="border-color: var(--accent);">
+      <div class="form-group">
+        <label><span class="status-dot" id="status-audio"></span>Audio Input Device</label>
+        <div class="row">
+          <select id="sel-audio-dev"><option value="">-- Click Scan Devices First --</option></select>
+          <button id="btn-init-audio" style="flex: 0.4;">Connect</button>
         </div>
-        <div>
-            <h2>Visualization Window</h2>
-            <p>別ウィンドウを生成して描画を開始します。</p>
-            <button id="btn-window">Open Visualizer Window</button>
+      </div>
+      <div class="form-group">
+        <label><span class="status-dot" id="status-midi"></span>MIDI Input Device</label>
+        <div class="row">
+          <select id="sel-midi-dev"><option value="all">All Devices</option></select>
+          <button id="btn-init-midi" style="flex: 0.4;">Connect</button>
         </div>
+      </div>
+      <div class="form-group">
+        <label><span class="status-dot" id="status-dmx"></span>DMX Output (Web Serial)</label>
+        <div class="row">
+          <select id="sel-dmx-dev"><option value="">-- No Authorized Ports --</option></select>
+          <button id="btn-auth-serial" style="flex: 0.4;">+ Auth Port</button>
+          <button id="btn-init-dmx" style="flex: 0.4;">Connect</button>
+        </div>
+      </div>
     </div>
 
-    <div class="panel">
-        <h2>Global Visualization Settings</h2>
-        <div class="grid">
-            <div>
-                <label>Default Shape</label>
-                <select id="cfg-shape">
-                    <option value="circle">Circle (円)</option>
-                    <option value="rect">Rectangle (四角)</option>
-                    <option value="triangle">Triangle (三角)</option>
-                </select>
-                <label>Default Size (Base Radius/Width)</label>
-                <input type="number" id="cfg-size" value="100" min="10" max="500">
-            </div>
-            <div>
-                <label>Base Color (HEX)</label>
-                <input type="color" id="cfg-color" value="#00adb5">
-                <label>Max Velocity Scale (拡大率 multiplier)</label>
-                <input type="number" id="cfg-scale" value="2.5" step="0.1" min="1" max="10">
-            </div>
-            <div>
-                <label>Animation Decay Rate (消え方の速さ)</label>
-                <input type="number" id="cfg-decay" value="0.92" step="0.01" min="0.8" max="0.99">
-                <label>DMX Output Channel (for CC)</label>
-                <input type="number" id="cfg-dmx-ch" value="1" min="1" max="512">
-            </div>
-        </div>
+    <div class="card">
+      <div class="form-group">
+        <label>Moving Speed (Smoothing): <span id="val-speed">0.15</span></label>
+        <input type="range" id="sys-speed" min="0.01" max="1.0" step="0.01" value="0.15">
+      </div>
+      <div class="form-group">
+        <label>FPS Limit: <span id="val-fps">60</span></label>
+        <input type="range" id="sys-fps" min="1" max="120" step="1" value="60">
+      </div>
+      <div class="form-group">
+        <label>Preset Name</label>
+        <input type="text" id="sys-preset" value="MyPreset">
+      </div>
+      <div class="row" style="margin-top: 15px;">
+        <button id="btn-save">Save JSON</button>
+        <button id="btn-load" onclick="document.getElementById('file-load').click()">Load JSON</button>
+        <input type="file" id="file-load" accept=".json" style="display: none;">
+        <button id="btn-reset" class="danger" style="flex: 0.5;">Reset</button>
+      </div>
     </div>
+  </div>
 
-    <div class="panel">
-        <h2>Console Log</h2>
-        <div id="log">Application initialized. Awaiting hardware interaction...</div>
+  <div class="panel">
+    <div class="panel-header">
+      Sources
+      <button id="btn-add-source">+ Add</button>
     </div>
+    <div id="sources-container"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      Outputs
+      <button id="btn-add-output">+ Add</button>
+    </div>
+    <div id="outputs-container"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      Visualization
+      <div>
+        <button id="btn-open-window" class="action">Open Canvas</button>
+        <button id="btn-add-layer">+ Layer</button>
+      </div>
+    </div>
+    <div id="layers-container"></div>
+  </div>
 </div>
+
+<div id="context-menu"></div>
 
 <script>
 /**
- * ---------------------------------------------------------------------------
- * 信号処理 & デバイスコントロール コアロジック
- * ---------------------------------------------------------------------------
+ * 状態管理 (State Management)
  */
+const AppState = {
+  settings: { speed: 0.15, fps: 60, preset: 'MyPreset' },
+  sources: [], // { id, name, type, chNote, routeTo, value }
+  outputs: [], // { id, name, type, device, address }
+  layers: [],  // { id, shape, params: { r, g, b, x, y, scale, opacity }, mappings: { paramKey: { sourceId, threshold, ratio } } }
+};
 
-// グローバルステート
-let midiAccess = null;
-let serialPort = null;
-let serialWriter = null;
+// ハードウェア＆描画状態
+let visualState = { layers: {} };
+let runtimeData = { sources: {} };
+
+let audioCtx, analyser, dataArray, audioSourceNode;
+let midiAccess, activeMidiInputId = 'all';
+let dmxPort, dmxWriter, serialPorts = [];
+const DMX_UNIVERSE = new Uint8Array(512);
+
 let visualWindow = null;
+let visualCanvas = null;
+let visualCtx = null;
 
-// DMXフレームバッファ (1スタートコード + 512チャンネル = 513バイト)
-const dmxBuffer = new Uint8Array(513); 
-
-// DOM要素
-const logEl = document.getElementById('log');
-const midiStatusEl = document.getElementById('midi-status');
-const dmxStatusEl = document.getElementById('dmx-status');
-const btnSerial = document.getElementById('btn-serial');
-const btnWindow = document.getElementById('btn-window');
-
-function logger(msg) {
-    const time = new Date().toLocaleTimeString();
-    logEl.innerHTML += `<div>[${time}] ${msg}</div>`;
-    logEl.scrollTop = logEl.scrollHeight;
-}
+const generateId = () => Math.random().toString(36).substr(2, 9);
+const getSourceVal = (id) => runtimeData.sources[id] || 0;
+const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
 
 /**
- * 1. Web MIDI API 実装
+ * デバイス・スキャンとリスト更新
  */
-async function initMIDI() {
-    if (!navigator.requestMIDIAccess) {
-        logger("Error: Web MIDI API not supported in this browser.");
-        return;
+document.getElementById('btn-scan-devices').addEventListener('click', async () => {
+  try {
+    // Audio: 権限リクエストをしてからデバイス一覧を取得（ラベル名取得のため）
+    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter(d => d.kind === 'audioinput');
+    const selAudio = document.getElementById('sel-audio-dev');
+    selAudio.innerHTML = audioInputs.map(d => `<option value="${d.deviceId}">${d.label || 'Unknown Audio Device'}</option>`).join('');
+
+    // MIDI
+    if (navigator.requestMIDIAccess) {
+      midiAccess = await navigator.requestMIDIAccess();
+      const inputs = Array.from(midiAccess.inputs.values());
+      const selMidi = document.getElementById('sel-midi-dev');
+      selMidi.innerHTML = `<option value="all">All Devices (Omni)</option>` + 
+                          inputs.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
     }
+
+    // Serial (DMX)
+    if ('serial' in navigator) {
+      serialPorts = await navigator.serial.getPorts();
+      updateSerialDropdown();
+    }
+    alert('Device scan complete. Please select your devices and click Connect.');
+  } catch(e) {
+    alert('Error scanning devices: ' + e.message);
+  }
+});
+
+document.getElementById('btn-auth-serial').addEventListener('click', async () => {
+  if ('serial' in navigator) {
     try {
-        midiAccess = await navigator.requestMIDIAccess();
-        midiStatusEl.textContent = "Ready";
-        midiStatusEl.className = "status connected";
-        
-        for (let input of midiAccess.inputs.values()) {
-            input.onmidimessage = handleMIDIMessage;
-            logger(`MIDI Input Connected: ${input.name}`);
-        }
-        
-        midiAccess.onstatechange = (e) => {
-            logger(`MIDI State Change: ${e.port.name} is ${e.port.state}`);
-        };
-    } catch (err) {
-        logger(`MIDI Initialization Failed: ${err}`);
-    }
-}
+      await navigator.serial.requestPort();
+      serialPorts = await navigator.serial.getPorts();
+      updateSerialDropdown();
+    } catch(e) { console.warn('Serial Auth Cancelled'); }
+  } else {
+    alert('Web Serial API not supported.');
+  }
+});
 
-function handleMIDIMessage(event) {
-    const [status, data1, data2] = event.data;
-    const type = status & 0xf0;
-    const channel = status & 0x0f; // 0-15
-
-    // Note ON
-    if (type === 0x90 && data2 > 0) {
-        const note = data1;
-        const velocity = data2;
-        logger(`Note ON - Note: ${note}, Velocity: ${velocity}`);
-        triggerVisualization(note, velocity);
-    }
-    // Control Change (CC)
-    else if (type === 0xb0) {
-        const ccNumber = data1;
-        const ccValue = data2;
-        logger(`CC Change - Control: ${ccNumber}, Value: ${ccValue}`);
-        processCCtoDMX(ccNumber, ccValue);
-    }
+function updateSerialDropdown() {
+  const selDmx = document.getElementById('sel-dmx-dev');
+  if(serialPorts.length === 0) {
+    selDmx.innerHTML = '<option value="">-- No Authorized Ports --</option>';
+  } else {
+    selDmx.innerHTML = serialPorts.map((p, i) => `<option value="${i}">Serial Port [${i}]</option>`).join('');
+  }
 }
 
 /**
- * 2. Web Serial API によるDMX512送信実装
- * ※一般的なUSB-DMX（FTDI等）やシリアル転送を想定
+ * デバイス接続初期化
  */
-btnSerial.addEventListener('click', async () => {
-    if (!navigator.serial) {
-        logger("Error: Web Serial API not supported. Use Chrome/Edge over HTTPS.");
-        return;
+document.getElementById('btn-init-audio').addEventListener('click', async () => {
+  const deviceId = document.getElementById('sel-audio-dev').value;
+  if(!deviceId) return alert('Please scan and select an audio device first.');
+  try {
+    if(!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      dataArray = new Uint8Array(analyser.frequencyBinCount);
     }
-    try {
-        serialPort = await navigator.serial.requestPort();
-        // DMX512規格の通信レート: 250kbps, データビット8, ストップビット2
-        await serialPort.open({ baudRate: 250000, dataBits: 8, stopBits: 2, parity: "none" });
-        serialWriter = serialPort.writable.getWriter();
-        
-        dmxStatusEl.textContent = "Connected";
-        dmxStatusEl.className = "status connected";
-        logger("DMX Serial Port Connected successfully.");
-        
-        // 継続的なDMXフレーム送信ループの開始（リフレッシュレート約40Hzを維持）
-        startDmxLoop();
-    } catch (err) {
-        logger(`Serial Connection Failed: ${err}`);
-    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } });
+    if(audioSourceNode) audioSourceNode.disconnect();
+    audioSourceNode = audioCtx.createMediaStreamSource(stream);
+    audioSourceNode.connect(analyser);
+    document.getElementById('status-audio').classList.add('active');
+  } catch(e) { alert('Audio Init Error: ' + e.message); }
 });
 
-function processCCtoDMX(ccNumber, ccValue) {
-    const targetChannel = parseInt(document.getElementById('cfg-dmx-ch').value, 10);
-    
-    // CC値 (0-127) を DMX値 (0-255) にビットシフト（マッピング処理）
-    const dmxValue = Math.min(255, Math.max(0, ccValue << 1));
-    
-    // バッファ配列のインデックス（0番目はスタートコード固定、1番目がDMX Ch.1）
-    if (targetChannel >= 1 && targetChannel <= 512) {
-        dmxBuffer[targetChannel] = dmxValue;
+document.getElementById('btn-init-midi').addEventListener('click', async () => {
+  if (!midiAccess) {
+      midiAccess = await navigator.requestMIDIAccess();
+  }
+  activeMidiInputId = document.getElementById('sel-midi-dev').value;
+  
+  // イベントリスナーをリセットして再登録
+  Array.from(midiAccess.inputs.values()).forEach(input => {
+    input.onmidimessage = null; // Reset
+    if(activeMidiInputId === 'all' || input.id === activeMidiInputId) {
+      input.onmidimessage = onMIDIMessage;
     }
+  });
+  document.getElementById('status-midi').classList.add('active');
+});
+
+document.getElementById('btn-init-dmx').addEventListener('click', async () => {
+  const portIndex = document.getElementById('sel-dmx-dev').value;
+  if(portIndex === "" || !serialPorts[portIndex]) return alert('Please auth and select a serial port.');
+  try {
+    if(dmxPort && dmxPort.readable) await dmxPort.close(); // Close existing
+    dmxPort = serialPorts[portIndex];
+    await dmxPort.open({ baudRate: 250000, dataBits: 8, stopBits: 2, parity: "none" });
+    dmxWriter = dmxPort.writable.getWriter();
+    document.getElementById('status-dmx').classList.add('active');
+  } catch(e) { alert('DMX Init Error: ' + e.message); }
+});
+
+/**
+ * 基本UIと設定イベントリスナー
+ */
+document.getElementById('sys-speed').addEventListener('input', (e) => { AppState.settings.speed = parseFloat(e.target.value); document.getElementById('val-speed').innerText = AppState.settings.speed; });
+document.getElementById('sys-fps').addEventListener('input', (e) => { AppState.settings.fps = parseInt(e.target.value); document.getElementById('val-fps').innerText = AppState.settings.fps; });
+document.getElementById('sys-preset').addEventListener('input', (e) => { AppState.settings.preset = e.target.value; });
+
+document.getElementById('btn-add-source').addEventListener('click', () => {
+  AppState.sources.push({ id: generateId(), name: 'Src ' + (AppState.sources.length + 1), type: 'midi_cc', chNote: 1, routeTo: 'none', value: 0 });
+  renderUI();
+});
+document.getElementById('btn-add-output').addEventListener('click', () => {
+  AppState.outputs.push({ id: generateId(), name: 'Out ' + (AppState.outputs.length + 1), type: 'dmx', address: 1 });
+  renderUI();
+});
+document.getElementById('btn-add-layer').addEventListener('click', () => {
+  const id = generateId();
+  AppState.layers.push({
+    id, shape: 'circle',
+    params: { r: 255, g: 255, b: 255, x: 50, y: 50, scale: 100, opacity: 100 },
+    mappings: {}
+  });
+  visualState.layers[id] = { r: 255, g: 255, b: 255, x: 50, y: 50, scale: 100, opacity: 100 };
+  renderUI();
+});
+
+document.getElementById('btn-save').addEventListener('click', () => {
+  const data = JSON.stringify(AppState, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = AppState.settings.preset + '.json'; a.click();
+});
+document.getElementById('file-load').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    Object.assign(AppState, JSON.parse(e.target.result));
+    visualState = { layers: {} };
+    AppState.layers.forEach(l => visualState.layers[l.id] = { ...l.params });
+    renderUI();
+  };
+  reader.readAsText(file);
+});
+document.getElementById('btn-reset').addEventListener('click', () => {
+  AppState.sources = []; AppState.outputs = []; AppState.layers = []; visualState.layers = {}; renderUI();
+});
+
+document.getElementById('btn-open-window').addEventListener('click', () => {
+  visualWindow = window.open('', 'MediaArtVisuals', 'width=1280,height=720');
+  visualWindow.document.write(`
+    <style>body { margin: 0; background: #000; overflow: hidden; }</style>
+    <canvas id="vc"></canvas>
+  `);
+  visualCanvas = visualWindow.document.getElementById('vc');
+  visualCtx = visualCanvas.getContext('2d');
+  const resize = () => { visualCanvas.width = visualWindow.innerWidth; visualCanvas.height = visualWindow.innerHeight; };
+  visualWindow.addEventListener('resize', resize);
+  resize();
+});
+
+/**
+ * UI レンダリング
+ */
+function renderUI() {
+  const srcCont = document.getElementById('sources-container');
+  srcCont.innerHTML = AppState.sources.map((src) => `
+    <div class="card">
+      <div class="row">
+        <div class="form-group"><label>Type</label><select onchange="updateSource('${src.id}', 'type', this.value)">
+          <option value="midi_cc" ${src.type==='midi_cc'?'selected':''}>MIDI CC</option>
+          <option value="midi_note_gate" ${src.type==='midi_note_gate'?'selected':''}>MIDI Note (Gate)</option>
+          <option value="midi_note_vel" ${src.type==='midi_note_vel'?'selected':''}>MIDI Note (Velocity)</option>
+          <option value="audio_amp" ${src.type==='audio_amp'?'selected':''}>Audio Amplitude</option>
+          <option value="audio_f1" ${src.type==='audio_f1'?'selected':''}>Audio Formant 1</option>
+          <option value="audio_f2" ${src.type==='audio_f2'?'selected':''}>Audio Formant 2</option>
+          <option value="audio_f3" ${src.type==='audio_f3'?'selected':''}>Audio Formant 3</option>
+          <option value="audio_f4" ${src.type==='audio_f4'?'selected':''}>Audio Formant 4</option>
+          <option value="audio_f5" ${src.type==='audio_f5'?'selected':''}>Audio Formant 5</option>
+        </select></div>
+        <div class="form-group"><label>CH/Note/ID</label><input type="number" value="${src.chNote}" onchange="updateSource('${src.id}', 'chNote', this.value)"></div>
+      </div>
+      <div class="form-group">
+        <label>Route to Output</label>
+        <select onchange="updateSource('${src.id}', 'routeTo', this.value)">
+          <option value="none">None</option>
+          ${AppState.outputs.map(o => `<option value="${o.id}" ${src.routeTo===o.id?'selected':''}>${o.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="indicator"><div class="indicator-bar" id="ind-${src.id}"></div></div>
+      <button class="danger" style="margin-top:5px;" onclick="removeSource('${src.id}')">Delete Source</button>
+    </div>
+  `).join('');
+
+  const outCont = document.getElementById('outputs-container');
+  outCont.innerHTML = AppState.outputs.map((out) => `
+    <div class="card">
+      <div class="form-group"><strong>${out.name}</strong></div>
+      <div class="row">
+        <div class="form-group"><label>Type</label><select onchange="updateOutput('${out.id}', 'type', this.value)">
+          <option value="dmx" ${out.type==='dmx'?'selected':''}>DMX (Serial)</option>
+        </select></div>
+        <div class="form-group"><label>DMX Address</label><input type="number" min="1" max="512" value="${out.address}" onchange="updateOutput('${out.id}', 'address', this.value)"></div>
+      </div>
+      <button class="danger" onclick="removeOutput('${out.id}')">Delete Output</button>
+    </div>
+  `).join('');
+
+  const layCont = document.getElementById('layers-container');
+  layCont.innerHTML = AppState.layers.map(layer => {
+    const p = layer.params;
+    return `
+    <div class="card">
+      <div class="form-group"><label>Shape</label><select onchange="updateLayer('${layer.id}', 'shape', this.value)">
+        <option value="rect" ${layer.shape==='rect'?'selected':''}>Rectangle</option>
+        <option value="circle" ${layer.shape==='circle'?'selected':''}>Circle</option>
+        <option value="triangle" ${layer.shape==='triangle'?'selected':''}>Triangle</option>
+        <option value="line" ${layer.shape==='line'?'selected':''}>Line</option>
+      </select></div>
+      ${['r','g','b'].map(k => renderMappedSlider(layer.id, k, p[k], 0, 255)).join('')}
+      ${['x','y'].map(k => renderMappedSlider(layer.id, k, p[k], 0, 100)).join('')}
+      ${renderMappedSlider(layer.id, 'scale', p.scale, 0, 2560)}
+      ${renderMappedSlider(layer.id, 'opacity', p.opacity, 0, 100)}
+      <button class="danger" style="margin-top:10px" onclick="removeLayer('${layer.id}')">Delete Layer</button>
+    </div>
+    `;
+  }).join('');
+  attachContextMenus();
 }
 
-async function startDmxLoop() {
-    while (serialWriter) {
-        try {
-            // DMXプロトコルにおける「ブレーク信号」のシミュレート
-            // Web Serial仕様に基づき、ポート側の信号ラインを一時的に制御してフレームの先頭を明示
-            await serialPort.setSignals({ break: true });
-            await new Promise(resolve => setTimeout(resolve, 1)); // Break Time (~88us以上)
-            await serialPort.setSignals({ break: false });
-            await new Promise(resolve => setTimeout(resolve, 1)); // Mark After Break
+function renderMappedSlider(layerId, paramKey, val, min, max) {
+  const layer = AppState.layers.find(l => l.id === layerId);
+  const map = layer.mappings[paramKey];
+  let html = `
+    <div class="form-group ${map ? 'mapping-active' : ''}">
+      <label>${paramKey.toUpperCase()}</label>
+      <input type="range" class="param-slider" data-layer="${layerId}" data-param="${paramKey}" min="${min}" max="${max}" value="${val}" oninput="updateLayerParam('${layerId}', '${paramKey}', this.value)">
+  `;
+  if (map) {
+    const srcName = AppState.sources.find(s => s.id === map.sourceId)?.name || 'Unknown';
+    html += `
+      <div class="sub-slider">
+        <label style="color:var(--accent)">Source: ${srcName}</label>
+        <label>Threshold</label><input type="range" min="0" max="1" step="0.01" value="${map.threshold}" oninput="updateMapping('${layerId}', '${paramKey}', 'threshold', this.value)">
+        <label>Ratio</label><input type="range" min="0" max="5" step="0.1" value="${map.ratio}" oninput="updateMapping('${layerId}', '${paramKey}', 'ratio', this.value)">
+      </div>
+    `;
+  }
+  html += `</div>`;
+  return html;
+}
 
-            // スタートコード(0x00) + 512ch データを一括フラッシュ
-            await serialWriter.write(dmxBuffer);
-            
-            // DMXのフレーム間インターバル（約25ms ≒ 40fps）
-            await new Promise(resolve => setTimeout(resolve, 25)); 
-        } catch (err) {
-            logger(`DMX Loop Error: ${err}`);
-            break;
-        }
-    }
+window.updateSource = (id, k, v) => { AppState.sources.find(s=>s.id===id)[k] = v; renderUI(); };
+window.removeSource = (id) => { AppState.sources = AppState.sources.filter(s=>s.id!==id); renderUI(); };
+window.updateOutput = (id, k, v) => { AppState.outputs.find(o=>o.id===id)[k] = v; renderUI(); };
+window.removeOutput = (id) => { AppState.outputs = AppState.outputs.filter(o=>o.id!==id); renderUI(); };
+window.updateLayer = (id, k, v) => { AppState.layers.find(l=>l.id===id)[k] = v; renderUI(); };
+window.removeLayer = (id) => { AppState.layers = AppState.layers.filter(l=>l.id!==id); delete visualState.layers[id]; renderUI(); };
+window.updateLayerParam = (id, k, v) => { AppState.layers.find(l=>l.id===id).params[k] = parseFloat(v); };
+window.updateMapping = (lId, pK, k, v) => { AppState.layers.find(l=>l.id===lId).mappings[pK][k] = parseFloat(v); };
+
+/**
+ * 右クリックマッピング
+ */
+let targetSlider = null;
+const ctxMenu = document.getElementById('context-menu');
+function attachContextMenus() {
+  document.querySelectorAll('.param-slider').forEach(el => {
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      targetSlider = { layerId: el.dataset.layer, param: el.dataset.param };
+      let html = `<div onclick="setMapping('none')">Unmap</div>`;
+      AppState.sources.forEach(src => html += `<div onclick="setMapping('${src.id}')">Map to: ${src.name}</div>`);
+      ctxMenu.innerHTML = html;
+      ctxMenu.style.display = 'block'; ctxMenu.style.left = e.pageX + 'px'; ctxMenu.style.top = e.pageY + 'px';
+    });
+  });
+}
+document.addEventListener('click', () => ctxMenu.style.display = 'none');
+window.setMapping = (sourceId) => {
+  if (!targetSlider) return;
+  const layer = AppState.layers.find(l => l.id === targetSlider.layerId);
+  if (sourceId === 'none') delete layer.mappings[targetSlider.param];
+  else layer.mappings[targetSlider.param] = { sourceId, threshold: 0.1, ratio: 1.0 };
+  renderUI();
+};
+
+/**
+ * 入力処理・シグナル解析
+ */
+function onMIDIMessage(msg) {
+  const [status, data1, data2] = msg.data;
+  const cmd = status >> 4;
+  AppState.sources.forEach(src => {
+    if (src.type === 'midi_cc' && cmd === 11 && src.chNote == data1) runtimeData.sources[src.id] = data2 / 127; 
+    else if (src.type === 'midi_note_gate' && (cmd === 9 || cmd === 8) && src.chNote == data1) runtimeData.sources[src.id] = cmd === 9 && data2 > 0 ? 1 : 0;
+    else if (src.type === 'midi_note_vel' && cmd === 9 && src.chNote == data1) runtimeData.sources[src.id] = data2 / 127;
+  });
+}
+
+function processAudioAnalysis() {
+  if (!analyser) return;
+  analyser.getByteFrequencyData(dataArray);
+  let sum = 0; for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+  const amp = (sum / dataArray.length) / 255;
+  const getBand = (hzMin, hzMax) => {
+    const minBin = Math.floor(hzMin * analyser.fftSize / audioCtx.sampleRate);
+    const maxBin = Math.floor(hzMax * analyser.fftSize / audioCtx.sampleRate);
+    let e = 0; for(let i=minBin; i<=maxBin; i++) e += dataArray[i];
+    return (e / (maxBin - minBin + 1)) / 255 || 0;
+  };
+  const formants = { f1: getBand(300, 800), f2: getBand(800, 1500), f3: getBand(1500, 2500), f4: getBand(2500, 3500), f5: getBand(3500, 5000) };
+  AppState.sources.forEach(src => {
+    if (src.type === 'audio_amp') runtimeData.sources[src.id] = amp;
+    if (src.type.startsWith('audio_f')) runtimeData.sources[src.id] = formants['f'+src.type.split('_f')[1]];
+  });
+}
+
+async function sendDMX() {
+  if (!dmxWriter) return;
+  const payload = new Uint8Array(518);
+  payload[0] = 0x7E; payload[1] = 0x06; payload[2] = 0x01; payload[3] = 0x02; payload[4] = 0x00;
+  payload.set(DMX_UNIVERSE, 5); payload[517] = 0xE7;
+  try { await dmxWriter.write(payload); } catch(e) {}
 }
 
 /**
- * 3. 別ウィンドウによるヴィジュアライゼーション管理
+ * エンジン・ループ
  */
-btnWindow.addEventListener('click', () => {
-    // すでに開いている場合はフォーカス
-    if (visualWindow && !visualWindow.closed) {
-        visualWindow.focus();
-        return;
+let lastTime = 0;
+function engineLoop(timestamp) {
+  requestAnimationFrame(engineLoop);
+  const frameLimit = 1000 / AppState.settings.fps;
+  if (timestamp - lastTime < frameLimit) return;
+  lastTime = timestamp;
+
+  processAudioAnalysis();
+
+  AppState.sources.forEach(src => {
+    const val = getSourceVal(src.id);
+    const el = document.getElementById('ind-' + src.id);
+    if(el) el.style.width = (val * 100) + '%';
+    if (src.routeTo !== 'none') {
+      const out = AppState.outputs.find(o => o.id === src.routeTo);
+      if (out && out.type === 'dmx') {
+        const addr = parseInt(out.address);
+        if(addr >= 1 && addr <= 512) DMX_UNIVERSE[addr - 1] = Math.floor(val * 255);
+      }
     }
+  });
 
-    // 別ウィンドウの展開
-    visualWindow = window.open("", "VisualizerWindow", "width=1000,height=700,menubar=no,toolbar=no,location=no,status=no");
-    
-    if (!visualWindow) {
-        logger("Error: Popup blocked! Please allow popups for this site.");
-        return;
-    }
+  sendDMX();
 
-    // 子ウィンドウ用HTMLドキュメントのインジェクション
-    visualWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Render Canvas (Visualizer)</title>
-            <style>
-                body, html { margin: 0; padding: 0; overflow: hidden; background: #000; width: 100%; height: 100%; }
-                canvas { display: block; width: 100vw; height: 100vh; }
-            </style>
-        </head>
-        <body>
-            <canvas id="stage"></canvas>
-            <script>
-                const canvas = document.getElementById('stage');
-                const ctx = canvas.getContext('2d');
-                let activeShapes = [];
+  AppState.layers.forEach(layer => {
+    if(!visualState.layers[layer.id]) visualState.layers[layer.id] = {...layer.params};
+    const vState = visualState.layers[layer.id];
+    ['r','g','b','x','y','scale','opacity'].forEach(key => {
+      let targetValue = layer.params[key];
+      const mapping = layer.mappings[key];
+      if (mapping) {
+        let srcVal = getSourceVal(mapping.sourceId);
+        if (srcVal > mapping.threshold) {
+          srcVal = Math.min(1.0, (srcVal - mapping.threshold) * mapping.ratio);
+          let maxVal = (key==='r'||key==='g'||key==='b') ? 255 : (key==='x'||key==='y'||key==='opacity') ? 100 : 2560;
+          targetValue = srcVal * maxVal;
+        }
+      }
+      vState[key] += (targetValue - vState[key]) * AppState.settings.speed;
+    });
+  });
 
-                function resize() {
-                    canvas.width = window.innerWidth;
-                    canvas.height = window.innerHeight;
-                }
-                window.onresize = resize;
-                resize();
-
-                // 親ウィンドウからの描画命令リスナー
-                window.addEventListener('message', (e) => {
-                    if (e.data.type === 'NOTE_ON') {
-                        activeShapes.push({
-                            shape: e.data.shape,
-                            x: Math.random() * canvas.width,
-                            y: Math.random() * canvas.height,
-                            baseSize: e.data.size,
-                            scale: e.data.maxScale, // トリガー時に最大値へ
-                            color: e.data.color,
-                            decay: e.data.decay,
-                            alpha: 1.0
-                        });
-                    }
-                });
-
-                // メイン描画ループ (毎フレーム更新)
-                function render() {
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)'; // 残像効果のためのトレイル処理
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                    for (let i = activeShapes.length - 1; i >= 0; i--) {
-                        let p = activeShapes[i];
-                        
-                        // イージング/ディケイ（指数関数的減衰によるキレの良いビート同期）
-                        p.scale = 1 + (p.scale - 1) * p.decay;
-                        p.alpha *= p.decay; // 透明度も同時に減衰
-
-                        ctx.save();
-                        ctx.globalAlpha = p.alpha;
-                        ctx.fillStyle = p.color;
-                        ctx.strokeStyle = p.color;
-                        ctx.lineWidth = 4;
-
-                        let currentSize = p.baseSize * p.scale;
-
-                        ctx.beginPath();
-                        if (p.shape === 'circle') {
-                            ctx.arc(p.x, p.y, currentSize / 2, 0, Math.PI * 2);
-                            ctx.fill();
-                        } else if (p.shape === 'rect') {
-                            ctx.fillRect(p.x - currentSize/2, p.y - currentSize/2, currentSize, currentSize);
-                        } else if (p.shape === 'triangle') {
-                            ctx.moveTo(p.x, p.y - currentSize/2);
-                            ctx.lineTo(p.x + currentSize/2, p.y + currentSize/2);
-                            ctx.lineTo(p.x - currentSize/2, p.y + currentSize/2);
-                            ctx.closePath();
-                            ctx.fill();
-                        }
-                        ctx.restore();
-
-                        // 完全に縮退、または不可視化したら配列から破棄
-                        if (p.scale <= 1.01 || p.alpha < 0.01) {
-                            activeShapes.splice(i, 1);
-                        }
-                    }
-                    requestAnimationFrame(render);
-                }
-                requestAnimationFrame(render);
-            <\/script>
-        </body>
-        </html>
-    `);
-    visualWindow.document.close();
-    logger("Visualizer Window opened and initialized.");
-});
-
-function triggerVisualization(note, velocity) {
-    if (!visualWindow || visualWindow.closed) return;
-
-    // GUI設定値のサンプリング
-    const shape = document.getElementById('cfg-shape').value;
-    const baseSize = parseFloat(document.getElementById('cfg-size').value);
-    const color = document.getElementById('cfg-color').value;
-    const maxScaleConfig = parseFloat(document.getElementById('cfg-scale').value);
-    const decay = parseFloat(document.getElementById('cfg-decay').value);
-
-    // Velocity (0-127) を正規化 (0.0 - 1.0) して拡大率へマッピング
-    const velocityRatio = velocity / 127;
-    // ベロシティが大きいほど、設定された最大拡大率に近づく
-    const targetScale = 1 + (maxScaleConfig - 1) * velocityRatio;
-
-    // クロスドメイン制限を回避しつつ、高速オブジェクトパッシングを実行
-    visualWindow.postMessage({
-        type: 'NOTE_ON',
-        note: note,
-        shape: shape,
-        size: baseSize,
-        maxScale: targetScale,
-        color: color,
-        decay: decay
-    }, '*');
+  if (visualCtx && visualCanvas) {
+    visualCtx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    visualCtx.fillRect(0, 0, visualCanvas.width, visualCanvas.height);
+    AppState.layers.forEach(layer => {
+      const state = visualState.layers[layer.id];
+      visualCtx.save();
+      visualCtx.translate((state.x / 100) * visualCanvas.width, (state.y / 100) * visualCanvas.height);
+      visualCtx.globalAlpha = clamp(state.opacity / 100, 0, 1);
+      visualCtx.fillStyle = `rgb(${state.r},${state.g},${state.b})`;
+      visualCtx.strokeStyle = `rgb(${state.r},${state.g},${state.b})`;
+      visualCtx.lineWidth = 2;
+      visualCtx.beginPath();
+      const s = state.scale;
+      if (layer.shape === 'rect') { visualCtx.rect(-s/2, -s/2, s, s); visualCtx.fill(); }
+      else if (layer.shape === 'circle') { visualCtx.arc(0, 0, s/2, 0, Math.PI * 2); visualCtx.fill(); }
+      else if (layer.shape === 'triangle') { visualCtx.moveTo(0, -s/2); visualCtx.lineTo(s/2, s/2); visualCtx.lineTo(-s/2, s/2); visualCtx.closePath(); visualCtx.fill(); }
+      else if (layer.shape === 'line') { visualCtx.moveTo(-s/2, 0); visualCtx.lineTo(s/2, 0); visualCtx.stroke(); }
+      visualCtx.restore();
+    });
+  }
 }
 
-// 初期化実行
-window.addEventListener('DOMContentLoaded', () => {
-    initMIDI();
-});
+requestAnimationFrame(engineLoop);
+renderUI();
 </script>
 </body>
 </html>
